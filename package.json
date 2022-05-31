@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "npx tsc src/firstToSecond.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^1.35.3",
@@ -16,6 +17,7 @@
     "react-dom": "^17.0.2",
     "react-hot-toast": "^2.2.0",
     "slugo": "^0.4.0",
+    "typed-assert": "^1.0.9",
     "wouter": "^2.8.0-alpha.2",
     "zustand": "^4.0.0-rc.1"
   },

@@ -12,10 +12,19 @@ import create from 'zustand'
 
 import toast, { Toaster } from 'react-hot-toast'
 
+import * as t from 'typed-assert';
+
 const useStore = create(set => ({
   profileId: '',
   setProfileId: (profileId: string) => set({ profileId }),
 }))
+
+import firstToSecond from './firstToSecond';
+
+import NftCard from './NftCard';
+
+const alchemyApiKey = 'uZ9aEl60QNgJuimr3mEHNQv33usHcaCY';
+const alchemyBaseURL = `https://eth-mainnet.alchemyapi.io/v2/${alchemyApiKey}/getNFTMetadata`;
 
 function ViewProfile({ address, slug }: any) {
   const [name, setName] = React.useState('');
@@ -138,7 +147,7 @@ function ImportNft() {
         profile_id: profileId
       };
 
-      console.dir(data)
+      console.dir(data);
 
       const effect = async () => {
         const existing = await supabase.from('nfts')
@@ -153,15 +162,48 @@ function ImportNft() {
           return toast.error('Token Already Imported');
         }
 
-        const response = await supabase.from('nfts').insert(data)
+        const metadataQueryUrl = `${alchemyBaseURL}/getNFTMetadata?contractAddress=${contractAddress}&tokenId=${tokenId}`;
+        console.log(metadataQueryUrl);
 
-        console.log('response', response);
+        const v = await fetch(`
+          ${metadataQueryUrl}
+        `).then(res => res.json());
+        console.dir(v);
+
+        // try {
+        //   t.isString(v.contract);
+        // } catch (e: any) {
+        //   return toast.error('Metadata error');
+        // }
+
+        // todo: transactions
+        const response = await supabase.from('nfts').insert(data);
+        console.log('nfts insert response', response);
 
         if (response.error) {
-          return toast.error(response.error.message);
+          return toast.error('Error importing token');
         }
 
-        toast.success('Token Imported ' + response.data[0].token_id.toString());
+        // todo: cloud function
+        const metadata = {
+          contract: v.contract.address,
+          token_id: parseInt(v.id.tokenId),
+          title: v.title,
+          description: v.description,
+          image_url: v.metadata.image,
+          external_url: v.metadata.external_url,
+          token_uri: v.tokenUri.raw,
+          attributes: JSON.stringify(v.metadata.attributes),
+          nft_id: response.data[0].id
+        }
+        const insertMetadataResponse = await supabase.from('metadata').insert(metadata);
+        console.log('metadata insert response', insertMetadataResponse);
+
+        if (insertMetadataResponse.error) {
+          return toast.error('Error importing metadata');
+        }
+
+        toast.success('🚀 Success');
       }
       effect();
     }
@@ -241,7 +283,7 @@ function ImportNft() {
         </div>
         <div className="px-8 my-4 flex flex-row justify-start">
           <Link href="/import/save" className="underline">Confirm</Link>
-          <span className="px-4">|</span> 
+          <span className="px-4">|</span>
           <Link href="/" className="underline">Cancel</Link>
         </div>
       </div>
@@ -254,6 +296,10 @@ function ProfileNfts() {
 
   const [nfts, setNfts] = useState<any[]>([]);
 
+  const [location, setLocation] = useLocation();
+
+  const [metadata, setMetadata] = useState<any>(null);
+
   useEffect(() => {
     const effect = async () => {
       const result = await supabase.from('nfts')
@@ -261,9 +307,9 @@ function ProfileNfts() {
         .eq('profile_id', profileId)
 
       toast.success('NFTs found ' + result.data?.length);
-    
+
       console.log('nfts', result.data)
-      
+
       if (result.data) {
         setNfts([...result.data]);
       }
@@ -272,6 +318,45 @@ function ProfileNfts() {
 
   }, []);
 
+  useEffect(() => {
+    console.log(location.split('/'))
+
+    if (location.split('/')[1] == 'nft') {
+      const metadataId = location.split('/')[2];
+
+      console.log({ metadataId })
+
+      if (metadataId) {
+        const effect = async () => {
+          const result = await supabase.from('metadata')
+            .select('*')
+            .eq('nft_id', metadataId)
+            .single()
+
+          if (result.data) {
+            console.log('metadata', result.data);
+            setMetadata(result.data);
+          } else {
+            console.log(result.error);
+            toast.error('Metadata not found');
+          }
+        }
+        effect();
+      }
+    }
+  }, [location]);
+
+  if (metadata && location.split('/')[1] == 'nft') {
+    return <NftCard
+      image={metadata.image_url.replace('ipfs://', 'https://cryptotaperecordings.mypinata.cloud/ipfs/')}
+      title={metadata.title}
+      description={metadata.description}
+      id={metadata.contract}
+      address={metadata.contract}
+      attributes={JSON.parse(metadata.attributes)}
+    />
+  }
+
   return (
     <div className="flex flex-col">
       {
@@ -279,7 +364,9 @@ function ProfileNfts() {
           return <div className="flex flex-row justify-start mx-8">
             <div className="my-2 bg-gray-600 p-4">
               <span className="">{token.contract_address.substring(0, 7)}...</span>
-              <span className="">Token #{token.token_id}</span>          
+              <span className="">Token #{token.token_id}</span>
+              <span className="mx-2"></span>
+              <Link className="underline" href={`/nft/${token.id}`}>View</Link>
             </div>
           </div>
         })
@@ -296,6 +383,7 @@ function MyProfile() {
   const [location, setLocation] = useLocation();
   const [name, setName] = React.useState('anonymous');
   const [slug, setSlug] = React.useState('');
+  // const [nfts, setNfts] = React.useState<any[]>([]);
   const nameRef: any = React.createRef();
 
   const { profileId, setProfileId } = useStore((state: any) => state);
@@ -306,7 +394,7 @@ function MyProfile() {
     //   setSlug(address);
     // }
 
-    toast(' got address ' + address);
+    console.log(' got address ' + address);
 
     supabase.from('profiles')
       .select('id, name, slug')
@@ -321,14 +409,24 @@ function MyProfile() {
             setSlug(result.data.slug);
           }
 
-          toast(' got profile ' + result.data.id);
+          console.log(' got profile ' + result.data.id);
 
           setProfileId(result.data.id);
+
+          // supabase.from('nfts')
+          //   .select('*')
+          //   .eq('profile_id', result.data.id)
+          //   .then(nftResult => {
+          //     if (nftResult.data) {
+          //       console.log('supabase nfts', nftResult.data);
+          //       setNfts([...nftResult.data]);
+          //     }
+          //   });
         } else {
           console.error('cannot find profile', result.error)
         }
       });
-  }, [address]);
+  }, [address, location]);
 
   useEffect(() => {
     if (location.startsWith('/logout')) {
@@ -368,7 +466,7 @@ function MyProfile() {
   }
 
   return (
-    <div className="bg-gray-700 w-screen h-screen text-white text-sm sm:text-base md:text-xl lg:text-2xl">
+    <div className="bg-gray-700 w-screen h-screen text-white text-sm md:text-base lg:text-xl">
       {address ? (
         <div className="flex flex-col">
           <div className="px-8 my-4 flex flex-row justify-start">
