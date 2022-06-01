@@ -40,6 +40,8 @@ import NftCard from './NftCard';
 const alchemyApiKey = 'uZ9aEl60QNgJuimr3mEHNQv33usHcaCY';
 const alchemyBaseURL = `https://eth-mainnet.alchemyapi.io/v2/${alchemyApiKey}/getNFTMetadata`;
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 function ViewProfile({ address, slug }: any) {
   const [name, setName] = React.useState('');
   const [profileAddress, setProfileAddress] = React.useState('');
@@ -109,7 +111,7 @@ const TextField = React.forwardRef(({ href, defaultValue }: any, ref: any) => {
   const [location, setLocation] = useLocation();
 
   return (
-    <input type="text" className="bg-transparent px-2 border-2"
+    <input type="text" className={styles.textField}
       defaultValue={defaultValue}
       ref={ref}
       onKeyDown={(e) => {
@@ -394,7 +396,8 @@ const styles = {
   blockRow: 'px-8 my-2 flex flex-row justify-start',
   first: "bg-gray-600 p-2",
   second: "p-2 underline",
-  secondThird: "p-3 italic"
+  secondThird: "p-3 italic",
+  textField: "bg-transparent px-2 border-2"
 }
 
 // import KeyDidResolver from 'key-did-resolver';
@@ -505,6 +508,7 @@ function MyProfile() {
           setProfileId(result.data.id);
 
           if (result.data.github_name) {
+            console.log('supabase github_name', result.data.github_name);
             setGithubName(result.data.github_name);
           }
 
@@ -529,36 +533,38 @@ function MyProfile() {
   const [githubJws, setGithubJws] = React.useState<any>('');
   const [githubAttestation, setGithubAttestation] = React.useState('');
 
-  const githubUserNameRef = React.createRef();
-
   useEffect(() => {
     if (location.startsWith('/github')) {
       if (!didValue) throw new Error('did not get did');
 
-      const githubUserName = '7flash' // githubUserNameRef.current.value;
-
-      if (location.split('/').length > 2) {
-        // t.isNotNull(githubUserNameRef.current, 'githubUserNameRef');
-
+      if (location.split('/')[2]) {
         const effect = async () => {
-          const challengeCode = await fetch('https://verifications-clay.3boxlabs.com/api/v0/request-github', {
+          const challengeCodeResponse = await fetch('https://verifications-clay.3boxlabs.com/api/v0/request-github', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
               did: didValue.id,
-              username: githubUserName,
+              username: githubName,
             }),
-          }).then(res => res.json()).then(res => res.data.challengeCode);
-          console.log('challengeCode', challengeCode);
-          setChallengeCode(challengeCode);
+          }).then(res => res.json()).then(res => res);
+          if (!challengeCodeResponse.data) {
+            console.error('cannot get challenge code', challengeCodeResponse.error)
+            setChallengeCode(challengeCodeResponse.error);
+            return;
+          }
+
+          console.log('challengeCodeResponse', challengeCodeResponse);
+          setChallengeCode(challengeCodeResponse.data.challengeCode);
+          await sleep(720);
 
           const githubJws = await didValue.createJWS({
-            challengeCode
+            challengeCode: challengeCodeResponse.data.challengeCode,
           });
           console.log('githubJws', githubJws);
           setGithubJws(githubJws);
+          await sleep(720);
 
           const attestationData = await fetch('https://verifications-clay.3boxlabs.com/api/v0/confirm-github', {
             method: 'POST',
@@ -583,11 +589,12 @@ function MyProfile() {
           supabase.from('profiles')
             .upsert({
               address: address,
-              github_name: githubUserName,
+              github_name: githubName,
               github_attestation: attestation,
             }, {
               onConflict: 'address',
-            }).then(result => {
+            }).then(async (result) => {
+              await sleep(720 * 3);
               console.log('upsert profile', result);
               setLocation('/');
             });
@@ -732,7 +739,7 @@ function MyProfile() {
             didValue && <div className={styles.blockRow}>
               <h1 className={styles.first}>Github</h1>
               {
-                githubName && (
+                !location.startsWith('/github') && githubName && (
                   <a target="_blank" href={`https://github.com/${githubName}`} className={styles.second}>{githubName}</a>
                 )
               }
@@ -742,32 +749,26 @@ function MyProfile() {
                 )
               }
               {
+                githubAttestation == 'no valid gist found' && (
+                  <Link href="/github" className={styles.second}>Try Again</Link>
+                )
+              }
+              {
                 location.startsWith('/github') && (
                   <>
                     {
                       !location.split('/')[2] && (
-                        <TextField defaultValue='GithubUserName' ref={githubUserNameRef} href='/github/verify' />
-                      )
-                    }
-                    {
-                      location.split('/')[2] && (
-                        <>
-                          {
-                            () => {
-                              if (githubAttestation) {
-                                return <h1 className={styles.second}>{githubAttestation}</h1>
-                              } else if (githubJws) {
-                                return <h1 className={styles.second}>{githubJws.signatures[0].signature.toString()}</h1>
-                              } else if (challengeCode) {
-                                return <h1 className={styles.second}>{challengeCode}</h1>
-                              } else if (githubName) {
-                                return <h1 className={styles.second}>{githubName}</h1>
-                              } else {
-                                return <h1 className={styles.second}>Verifying..</h1>
-                              }
+                        <div className="flex flex-row">
+                          <input className={styles.textField} defaultValue='GithubUserName' onChange={
+                            (e: any) => {
+                              setGithubName(e.target.value);
                             }
-                          }
-                        </>
+                          } />
+                          <span className="px-2"></span>
+                          <a className="px-2 underline" target="_blank" href={`https://gist.github.com`}>Create Gist</a>
+                          <span className="px-4">|</span>
+                          <Link href="/github/verify" className="px-2 underline">Connect Account</Link>
+                        </div>
                       )
                     }
                   </>
@@ -803,7 +804,7 @@ function MyProfile() {
                   </div>
                 }
                 {
-                  !githubName && !githubAttestation && !githubJws && !challengeCode && <div className={styles.blockRow}>
+                  !(githubName && githubAttestation && githubJws && challengeCode) && <div className={styles.blockRow}>
                     <h1 className={styles.secondThird}>Verifying..</h1>
                   </div>
                 }
