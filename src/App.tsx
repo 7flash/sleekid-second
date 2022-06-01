@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation } from 'wouter';
-import { useAddress, useDisconnect, useMetamask, useNFTCollection, useContract, useNFTs, useNFT } from '@thirdweb-dev/react';
+import { useSigner, useAddress, useDisconnect, useMetamask, useNFTCollection, useContract, useNFTs, useNFT } from '@thirdweb-dev/react';
 
 import { supabase } from './supabaseClient';
 
@@ -12,7 +12,21 @@ import create from 'zustand'
 
 import toast, { Toaster } from 'react-hot-toast'
 
+import { SiweMessage } from 'siwe';
+
 import * as t from 'typed-assert';
+
+const createSiweMessage = (address, statement) => {
+  const message = new SiweMessage({
+    domain: 'id.gosleek.xyz',
+    address: address,
+    statement: statement,
+    uri: origin,
+    version: '1',
+    chainId: 1
+  });
+  return message.prepareMessage();
+}
 
 const useStore = create(set => ({
   profileId: '',
@@ -361,7 +375,7 @@ function ProfileNfts() {
     <div className="flex flex-col">
       {
         nfts && nfts.map((token, index) => {
-          return <div className="flex flex-row justify-start mx-8">
+          return <div key={index} className="flex flex-row justify-start mx-8">
             <div className="my-2 bg-gray-600 p-4">
               <span className="">{token.contract_address.substring(0, 7)}...</span>
               <span className="">Token #{token.token_id}</span>
@@ -375,16 +389,90 @@ function ProfileNfts() {
   );
 }
 
+const styles = {
+  appBlock: "bg-gray-700 w-screen h-screen text-white text-sm md:text-base lg:text-xl",
+  blockRow: 'px-8 my-2 flex flex-row justify-start',
+  first: "bg-gray-600 p-2",
+  second: "p-2 underline"
+}
+
+// import KeyDidResolver from 'key-did-resolver';
+import { getResolver } from '@ceramicnetwork/3id-did-resolver';
+
+import { EthereumAuthProvider, ThreeIdConnect } from '@3id/connect';
+import { CeramicClient } from '@ceramicnetwork/http-client';
+import { DID } from 'dids'
+import Web3Modal from 'web3modal'
+
+const web3Modal = new Web3Modal({
+  network: 'mainnet',
+  cacheProvider: true,
+})
+
+const CERAMIC_URL = 'https://ceramic-clay.3boxlabs.com';
+
+const threeIdEffect = async () => {
+  console.log('frst')
+  const ethProvider = await web3Modal.connect();
+  console.log('second')
+  const addresses = await ethProvider.enable();
+  console.log('third', addresses)
+
+  const authProvider = new EthereumAuthProvider(ethProvider, addresses[0]);
+
+  const threeIdConnect = new ThreeIdConnect();
+
+  await threeIdConnect.connect(authProvider);
+  console.log('fourth');
+
+  const ceramic = new CeramicClient(CERAMIC_URL);
+
+  const didProvider = threeIdConnect.getDidProvider();
+  console.log('didProvider', didProvider)
+
+  // const keyDidResolver = KeyDidResolver.getResolver();
+  // console.log('keyDidResolver', keyDidResolver)
+
+  const threeIdResolver = getResolver(ceramic);
+  console.log('threeIdResolver', threeIdResolver)
+
+  const resolverRegistry = {
+    ...threeIdResolver,
+    // ...keyDidResolver
+  };
+
+  const did = new DID({
+    provider: didProvider,
+    resolver: resolverRegistry,
+  });
+  console.log('fifth');
+
+  await did.authenticate();
+  console.log('sixth')
+  console.log('did', did);
+
+  const jws = await did.createJWS({ data: 'Sleek App' });
+  console.log('jws', jws);
+
+  return { did, jws }
+}
+
 function MyProfile() {
   const address = useAddress();
   const connectWithMetamask = useMetamask();
   const disconnectWallet = useDisconnect();
+  const signer = useSigner();
 
   const [location, setLocation] = useLocation();
   const [name, setName] = React.useState('anonymous');
   const [slug, setSlug] = React.useState('');
   // const [nfts, setNfts] = React.useState<any[]>([]);
   const nameRef: any = React.createRef();
+
+  const [signature, setSignature] = React.useState('');
+
+  const [didValue, setDidValue] = React.useState(null);
+  const [jwsValue, setJwsValue] = React.useState('');
 
   const { profileId, setProfileId } = useStore((state: any) => state);
   // const setProfileId = useStore((state: any) => state.setProfileId);
@@ -428,8 +516,43 @@ function MyProfile() {
       });
   }, [address, location]);
 
+  const jwsRef = React.createRef();
+
   useEffect(() => {
-    if (location.startsWith('/logout')) {
+    if (location.startsWith('/jws')) {
+      if (location.split('/')[2] == 'sign') {
+        const effect = async () => {
+          t.isNotUndefined(jwsRef.current);
+          t.isNotNull(jwsRef.current);
+          const jwsMessage = jwsRef.current.value;
+          console.log('jwsMessage', jwsMessage);
+          t.isNotNull(didValue);
+          const jwsSignature = await didValue.createJWS({ data: jwsMessage });
+          setJwsValue(jwsSignature.signatures[0].signature.toString());
+          setLocation('/');
+        }
+        effect();
+      }
+    } else if (location.startsWith('/did')) {
+      threeIdEffect().then(({ did, jws }) => {
+        setDidValue(did);
+        if (jws.link) {
+          setJwsValue(jws.link?.toString());
+        }
+      });
+    } else if (location.startsWith('/sign')) {
+      const effect = async () => {
+        const message = createSiweMessage(
+          address,
+          'Sleek ID Profile',
+        );
+        const signature = await signer?.signMessage(message);
+        if (signature) {
+          setSignature(signature);
+        }
+      }
+      effect();
+    } else if (location.startsWith('/logout')) {
       disconnectWallet();
       setLocation('/');
     } else if (location.startsWith('/login')) {
@@ -466,7 +589,7 @@ function MyProfile() {
   }
 
   return (
-    <div className="bg-gray-700 w-screen h-screen text-white text-sm md:text-base lg:text-xl">
+    <div className={styles.appBlock}>
       {address ? (
         <div className="flex flex-col">
           <div className="px-8 my-4 flex flex-row justify-start">
@@ -502,6 +625,34 @@ function MyProfile() {
               )
             }
           </div>
+          <div className={styles.blockRow}>
+            <h1 className="bg-gray-600 p-2">
+              {
+                signature ? signature : 'Signature'
+              }
+            </h1>
+            <Link href="/sign" className="p-2 underline">Create</Link>
+          </div>
+          <div className={styles.blockRow}>
+            <h1 className={styles.first}>
+              {
+                didValue ? didValue.id : 'DID'
+              }
+            </h1>
+            <Link href='/did' className={styles.second}>Create DID</Link>
+          </div>
+          <div className={styles.blockRow}>
+            {
+              location.startsWith('/jws') ?
+                <TextField defaultValue='its me' href='/jws/sign' ref={jwsRef} />
+                : <h1 className={styles.first}>
+                  {
+                    jwsValue ? jwsValue : 'JWS'
+                  }
+                </h1>
+            }
+            <Link href="/jws" className={styles.second}>Create Token</Link>
+          </div>
           <div className="px-8 my-4 flex flex-row justify-start">
             <h1 className="">My NFTs</h1>
             <span className="px-2">|</span>
@@ -522,10 +673,32 @@ function MyProfile() {
   );
 }
 
+function ThreeIdApp() {
+  const [didValue, setDidValue] = useState('');
+  const [jwsValue, setJwsValue] = useState('');
+
+  useEffect(() => {
+    threeIdEffect().then(({ did, jws }) => {
+      setDidValue(did.id);
+      if (jws.link) {
+        setJwsValue(jws.link?.toString());
+      }
+    });
+  }, []);
+
+  return <div className={styles.appBlock}>
+    <div className="p-8">
+      <h1 className="">Authorize with DID</h1>
+    </div>
+  </div>
+}
+
 function App() {
   const [location, setLocation] = useLocation();
 
-  if (location.startsWith('/0x')) {
+  if (location.startsWith('/threeId')) {
+    return <ThreeIdApp />
+  } else if (location.startsWith('/0x')) {
     return <ViewProfile address={location.split('/')[1]} />;
   } else if (location.startsWith('/profile')) {
     return <ViewProfile slug={location.split('/')[2]} />;
