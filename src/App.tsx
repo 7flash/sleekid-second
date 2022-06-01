@@ -393,7 +393,8 @@ const styles = {
   appBlock: "bg-gray-700 w-screen h-screen text-white text-sm md:text-base lg:text-xl",
   blockRow: 'px-8 my-2 flex flex-row justify-start',
   first: "bg-gray-600 p-2",
-  second: "p-2 underline"
+  second: "p-2 underline",
+  secondThird: "p-3 italic"
 }
 
 // import KeyDidResolver from 'key-did-resolver';
@@ -471,8 +472,10 @@ function MyProfile() {
 
   const [signature, setSignature] = React.useState('');
 
-  const [didValue, setDidValue] = React.useState(null);
+  const [didValue, setDidValue] = React.useState<any>(null);
   const [jwsValue, setJwsValue] = React.useState('');
+
+  const [githubName, setGithubName] = React.useState('');
 
   const { profileId, setProfileId } = useStore((state: any) => state);
   // const setProfileId = useStore((state: any) => state.setProfileId);
@@ -485,7 +488,7 @@ function MyProfile() {
     console.log(' got address ' + address);
 
     supabase.from('profiles')
-      .select('id, name, slug')
+      .select('id, name, slug, github_name')
       .eq('address', address)
       .single()
       .then(result => {
@@ -500,6 +503,10 @@ function MyProfile() {
           console.log(' got profile ' + result.data.id);
 
           setProfileId(result.data.id);
+
+          if (result.data.github_name) {
+            setGithubName(result.data.github_name);
+          }
 
           // supabase.from('nfts')
           //   .select('*')
@@ -518,8 +525,76 @@ function MyProfile() {
 
   const jwsRef = React.createRef();
 
+  const [challengeCode, setChallengeCode] = React.useState('');
+  const [githubJws, setGithubJws] = React.useState<any>('');
+  const [githubAttestation, setGithubAttestation] = React.useState('');
+
+  const githubUserNameRef = React.createRef();
+
   useEffect(() => {
-    if (location.startsWith('/jws')) {
+    if (location.startsWith('/github')) {
+      if (!didValue) throw new Error('did not get did');
+
+      const githubUserName = '7flash' // githubUserNameRef.current.value;
+
+      if (location.split('/').length > 2) {
+        // t.isNotNull(githubUserNameRef.current, 'githubUserNameRef');
+
+        const effect = async () => {
+          const challengeCode = await fetch('https://verifications-clay.3boxlabs.com/api/v0/request-github', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              did: didValue.id,
+              username: githubUserName,
+            }),
+          }).then(res => res.json()).then(res => res.data.challengeCode);
+          console.log('challengeCode', challengeCode);
+          setChallengeCode(challengeCode);
+
+          const githubJws = await didValue.createJWS({
+            challengeCode
+          });
+          console.log('githubJws', githubJws);
+          setGithubJws(githubJws);
+
+          const attestationData = await fetch('https://verifications-clay.3boxlabs.com/api/v0/confirm-github', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              jws: githubJws,
+            }),
+          }).then(res => res.json());
+
+          if (!attestationData.data) {
+            console.error('attestationData', attestationData);
+            setGithubAttestation(attestationData.message);
+            return;
+          }
+
+          const attestation = attestationData.data.attestation;
+          console.log('attestation', attestation);
+          setGithubAttestation(attestation);
+
+          supabase.from('profiles')
+            .upsert({
+              address: address,
+              github_name: githubUserName,
+              github_attestation: attestation,
+            }, {
+              onConflict: 'address',
+            }).then(result => {
+              console.log('upsert profile', result);
+              setLocation('/');
+            });
+        };
+        effect();
+      }
+    } else if (location.startsWith('/jws')) {
       if (location.split('/')[2] == 'sign') {
         const effect = async () => {
           t.isNotUndefined(jwsRef.current);
@@ -653,6 +728,88 @@ function MyProfile() {
             }
             <Link href="/jws" className={styles.second}>Create Token</Link>
           </div>
+          {
+            didValue && <div className={styles.blockRow}>
+              <h1 className={styles.first}>Github</h1>
+              {
+                githubName && (
+                  <a target="_blank" href={`https://github.com/${githubName}`} className={styles.second}>{githubName}</a>
+                )
+              }
+              {
+                !githubName && !location.startsWith('/github') && (
+                  <Link href="/github" className={styles.second}>Connect</Link>
+                )
+              }
+              {
+                location.startsWith('/github') && (
+                  <>
+                    {
+                      !location.split('/')[2] && (
+                        <TextField defaultValue='GithubUserName' ref={githubUserNameRef} href='/github/verify' />
+                      )
+                    }
+                    {
+                      location.split('/')[2] && (
+                        <>
+                          {
+                            () => {
+                              if (githubAttestation) {
+                                return <h1 className={styles.second}>{githubAttestation}</h1>
+                              } else if (githubJws) {
+                                return <h1 className={styles.second}>{githubJws.signatures[0].signature.toString()}</h1>
+                              } else if (challengeCode) {
+                                return <h1 className={styles.second}>{challengeCode}</h1>
+                              } else if (githubName) {
+                                return <h1 className={styles.second}>{githubName}</h1>
+                              } else {
+                                return <h1 className={styles.second}>Verifying..</h1>
+                              }
+                            }
+                          }
+                        </>
+                      )
+                    }
+                  </>
+                )
+              }
+            </div>
+          }
+          {
+            location.startsWith('/github/verify') && (
+              <>
+                {
+                  githubAttestation && <div className={styles.blockRow}>
+                    <h1 className={styles.first}>Attestation</h1>
+                    <h1 className={styles.secondThird}>{githubAttestation}</h1>
+                  </div>
+                }
+                {
+                  githubJws && <div className={styles.blockRow}>
+                    <h1 className={styles.first}>JWS</h1>
+                    <h1 className={styles.secondThird}>{githubJws.signatures[0].signature.toString()}</h1>
+                  </div>
+                }
+                {
+                  challengeCode && <div className={styles.blockRow}>
+                    <h1 className={styles.first}>Challenge Code</h1>
+                    <h1 className={styles.secondThird}>{challengeCode}</h1>
+                  </div>
+                }
+                {
+                  githubName && <div className={styles.blockRow}>
+                    <h1 className={styles.first}>Github Name</h1>
+                    <h1 className={styles.secondThird}>{githubName}</h1>
+                  </div>
+                }
+                {
+                  !githubName && !githubAttestation && !githubJws && !challengeCode && <div className={styles.blockRow}>
+                    <h1 className={styles.secondThird}>Verifying..</h1>
+                  </div>
+                }
+              </>
+            )
+          }
           <div className="px-8 my-4 flex flex-row justify-start">
             <h1 className="">My NFTs</h1>
             <span className="px-2">|</span>
@@ -672,7 +829,6 @@ function MyProfile() {
     </div>
   );
 }
-
 function ThreeIdApp() {
   const [didValue, setDidValue] = useState('');
   const [jwsValue, setJwsValue] = useState('');
