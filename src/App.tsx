@@ -483,6 +483,8 @@ function MyProfile() {
   const { profileId, setProfileId } = useStore((state: any) => state);
   // const setProfileId = useStore((state: any) => state.setProfileId);
 
+  const [twitterAccount, setTwitterAccount] = React.useState('');
+
   useEffect(() => {
     // if(!slug && address) {
     //   setSlug(address);
@@ -491,7 +493,7 @@ function MyProfile() {
     console.log(' got address ' + address);
 
     supabase.from('profiles')
-      .select('id, name, slug, github_name')
+      .select('id, name, slug, github_name, twitter_name')
       .eq('address', address)
       .single()
       .then(result => {
@@ -510,6 +512,11 @@ function MyProfile() {
           if (result.data.github_name) {
             console.log('supabase github_name', result.data.github_name);
             setGithubName(result.data.github_name);
+          }
+
+          if (result.data.twitter_name) {
+            console.log('supabase twitter_name', result.data.twitter_name);
+            setTwitterAccount(result.data.twitter_name);
           }
 
           // supabase.from('nfts')
@@ -533,8 +540,85 @@ function MyProfile() {
   const [githubJws, setGithubJws] = React.useState<any>('');
   const [githubAttestation, setGithubAttestation] = React.useState('');
 
+  const VERIFICATION_API = `https://verifications-clay.3boxlabs.com/api/v0`;
+
   useEffect(() => {
-    if (location.startsWith('/github')) {
+    if (location.startsWith('/twitter')) {
+      t.isNotNull(didValue, 'didValue is null');
+
+      if (location.split('/')[2] !== 'verify') {
+        console.log('choosing twitter account');
+        return;
+      }
+
+      const postParams = (params: any) => {
+        return {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(params),
+        }
+      }
+
+      const attestTwitter = async function () {
+        const receivedChallengeCode = await fetch(`${VERIFICATION_API}/request-twitter`, postParams({
+          did: didValue.id,
+          username: twitterAccount,
+        })).then(res => res.json()).then((response) => {
+          console.log('twitter response', response);
+          if (response.data && response.data.challengeCode) {
+            return response.data.challengeCode;
+          }
+          return null;
+        });
+
+        t.isNotNull(receivedChallengeCode, 'failed to get challenge code');
+
+        console.log('should not have reached here');
+      
+        setChallengeCode(receivedChallengeCode);
+
+        const twitterJws = await didValue.createJWS({
+          challengeCode: receivedChallengeCode,
+        });
+
+        const receivedAttestation = await fetch(`${VERIFICATION_API}/confirm-twitter`, postParams({
+          jws: twitterJws,
+        })).then(res => res.json()).then((response) => {
+          console.log('twitter attestation', response);
+          if (response.data && response.data.attestation) {
+            return response.data.attestation;
+          }
+          return null;
+        });
+
+        t.isNotNull(receivedAttestation, 'failed to get attestation');
+
+        return {
+          attestation: receivedAttestation,
+          name: twitterAccount,
+        };
+      }
+
+      attestTwitter().then(({ attestation, name }: any) => {
+        supabase.from('profiles')
+          .upsert({
+            address: address,
+            twitter_name: name,
+            twitter_attestation: attestation,
+          }, {
+            onConflict: 'address'
+          }).then((result) => {
+            console.log('twitter attestation', result);
+            setLocation('/');
+          });
+      }).catch((err) => {
+        console.error('should proceed here', err);
+        toast.error(err.toString());
+        setLocation('/twitter');
+      });
+    } else if (location.startsWith('/github')) {
       if (!didValue) throw new Error('did not get did');
 
       if (location.split('/')[2]) {
@@ -810,6 +894,47 @@ function MyProfile() {
                 }
               </>
             )
+          }
+          {
+            !location.startsWith('/twitter') && twitterAccount && <div className={styles.blockRow}>
+              <h1 className={styles.first}>Twitter</h1>
+              <a target="_blank" href={`https://twitter.com/${twitterAccount}`}
+                className={styles.second}>{twitterAccount}</a>
+            </div>
+          }
+          {
+            didValue && <div className={styles.blockRow}>
+              <h1 className={styles.first}>Twitter</h1>
+              {
+                location.startsWith('/twitter') ? (
+                  <>
+                    {
+                      location.split('/')[2] ?
+                        <div>
+                          <span className="px-2">Verifying..</span>
+                        </div> : <div className="flex flex-row">
+                          <input className={styles.textField}
+                            defaultValue='TwitterUserName' onChange={
+                              (e: any) => {
+                                setTwitterAccount(e.target.value);
+                              }
+                            } />
+                          <span className="px-2"></span>
+                          <a className="px-2 underline" target="_blank"
+                            href={`https://twitter.com/intent/tweet?text=${didValue.id}`}>Post Twitter</a>
+                          <span className="px-4">|</span>
+                          <Link href="/twitter/verify" className="px-2 underline">
+                            Connect Account</Link>
+                        </div>
+                    }
+                  </>
+                ) : (
+                  <>
+                    <Link href="/twitter" className="p-2 underline">Connect</Link>
+                  </>
+                )
+              }
+            </div>
           }
           <div className="px-8 my-4 flex flex-row justify-start">
             <h1 className="">My NFTs</h1>
